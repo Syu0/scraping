@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Script to download the detailed image from a specific Naver image search result.
+Script to download multiple detailed images from a specific Naver image search result.
 
 Requirements:
     - BeautifulSoup4
@@ -15,20 +15,23 @@ Usage:
 The script:
     1. Loads the Naver image search page.
     2. Saves an initial screenshot (debug_page.png).
-    3. Finds and clicks the 3rd image container.
-    4. Waits for the detailed view to load (div.sc_new.sp_viewer) and saves its screenshot (debug_detailed_page.png).
-    5. Step-by-step, it navigates through:
+    3. Finds image containers ("div.tile_item._fe_image_tab_content_tile") on the page.
+    4. Randomly selects one container (ensuring different indices if possible) and clicks it.
+    5. Waits for the detailed view to load (div.sc_new.sp_viewer) and saves its screenshot (debug_detailed_page.png).
+    6. Step-by-step, navigates through:
          - div.sc_new.sp_viewer
          - div.viewer_image._fe_image_viewer_main_image_wrap
          - div.image
-         - <img> tag
+         - <img> tag  
        and extracts the src attribute.
-    6. Downloads the image with retries, validates its integrity, and logs the original image URL.
+    7. Downloads the image with retries, validates its integrity, and logs the original image URL.
+    8. Repeats the above process for a specified number of images.
 """
 
 import os
 import time
 import logging
+import random
 import requests
 from datetime import datetime
 from fake_useragent import UserAgent
@@ -46,6 +49,8 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
+
+SEARCH_URL = "https://search.naver.com/search.naver?ssc=tab.image.all&where=image&sm=tab_jum&query=나트랑+레스찹호텔"
 
 def setup_driver():
     """
@@ -66,9 +71,9 @@ def setup_driver():
         raise
     return driver
 
-def get_actual_image_url(driver):
+def get_actual_image_url(driver, image_index=2):
     """
-    Loads the Naver image search URL, clicks the 3rd image container,
+    Loads the search URL, clicks the image container at the specified index,
     saves a screenshot of the detailed view, and then step-by-step navigates
     through the following elements to extract the detailed image URL:
         1. div.sc_new.sp_viewer
@@ -79,19 +84,19 @@ def get_actual_image_url(driver):
     
     Args:
         driver (webdriver.Chrome): Selenium WebDriver instance.
+        image_index (int): The index of the image container to click.
     
     Returns:
         str or None: The detailed image URL if extraction succeeds; otherwise, None.
     """
-    target_url = "https://search.naver.com/search.naver?ssc=tab.image.all&where=image&sm=tab_jum&query=나트랑+레스찹호텔"
     try:
-        driver.get(target_url)
-        logging.info(f"URL 로드 성공: {target_url}")
+        driver.get(SEARCH_URL)
+        logging.info(f"URL 로드 성공: {SEARCH_URL}")
     except Exception as e:
-        logging.error(f"URL {target_url} 로드 중 에러: {str(e)}")
+        logging.error(f"URL {SEARCH_URL} 로드 중 에러: {str(e)}")
         return None
 
-    # 대기: 페이지의 동적 컨텐츠가 로드될 때까지
+    # 동적 컨텐츠 로드를 위해 대기
     time.sleep(5)
     
     # 초기 페이지 스크린샷 저장
@@ -114,12 +119,12 @@ def get_actual_image_url(driver):
     try:
         div_elements = driver.find_elements(By.CSS_SELECTOR, "div.tile_item._fe_image_tab_content_tile")
         logging.info(f"페이지에서 {len(div_elements)}개의 이미지 컨테이너 발견됨.")
-        if len(div_elements) < 3:
-            logging.error("이미지 컨테이너가 3개 미만임.")
+        if len(div_elements) <= image_index:
+            logging.error(f"요청한 인덱스({image_index})가 컨테이너 개수보다 큼.")
             return None
-        target_div = div_elements[2]
+        target_div = div_elements[image_index]
         target_div.click()
-        logging.info("3번째 이미지 컨테이너 클릭 완료.")
+        logging.info(f"{image_index+1}번째 이미지 컨테이너 클릭 완료.")
     except Exception as e:
         logging.error(f"이미지 컨테이너 클릭 중 에러: {str(e)}")
         return None
@@ -233,41 +238,71 @@ def download_image(url, save_dir, max_retries=3):
     logging.error("최대 재시도 횟수 후에도 이미지 다운로드 실패")
     return None
 
+def download_multiple_images(num_images=4):
+    """
+    Downloads multiple images by randomly selecting image containers from the search results.
+    
+    Args:
+        num_images (int): Number of images to download.
+    
+    Returns:
+        list: List of file paths for the successfully downloaded images.
+    """
+    driver = setup_driver()
+    downloaded_filepaths = []
+    used_indices = []
+    
+    for i in range(num_images):
+        try:
+            # 새로 검색 페이지 로드
+            driver.get(SEARCH_URL)
+            time.sleep(5)
+            containers = driver.find_elements(By.CSS_SELECTOR, "div.tile_item._fe_image_tab_content_tile")
+            total = len(containers)
+            if total == 0:
+                logging.error("검색 결과에서 이미지 컨테이너를 찾지 못함.")
+                break
+            # 아직 사용하지 않은 인덱스에서 랜덤 선택 (모두 사용했으면 전체에서 선택)
+            available = [idx for idx in range(total) if idx not in used_indices]
+            if not available:
+                chosen_index = random.choice(range(total))
+            else:
+                chosen_index = random.choice(available)
+            used_indices.append(chosen_index)
+            logging.info(f"선택된 이미지 인덱스: {chosen_index} (총 {total}개 중)")
+            
+            detailed_url = get_actual_image_url(driver, image_index=chosen_index)
+            if not detailed_url:
+                logging.error("상세 이미지 URL 추출 실패")
+                continue
+            logging.info(f"다운로드할 상세 이미지 URL: {detailed_url}")
+            
+            saved_path = download_image(detailed_url, save_dir="downloaded_images")
+            if saved_path:
+                logging.info(f"이미지 저장 완료: {saved_path}")
+                downloaded_filepaths.append(saved_path)
+            else:
+                logging.error("이미지 다운로드 실패.")
+        except Exception as e:
+            logging.error(f"이미지 다운로드 중 에러: {str(e)}")
+    
+    driver.quit()
+    return downloaded_filepaths
+
 def main():
     """
     Main function to execute the process:
-        1. Set up Selenium driver.
-        2. Retrieve the detailed image URL via get_actual_image_url.
-        3. Download the image.
-        4. Log results.
+        1. Download multiple images.
+        2. Log results.
     """
-    driver = None
-    try:
-        driver = setup_driver()
-        image_url = get_actual_image_url(driver)
-        if not image_url:
-            logging.error("상세 이미지 URL을 추출하지 못함.")
-            print("상세 이미지 URL 추출 실패. 로그를 확인하세요.")
-            return
-        
-        logging.info(f"다운로드할 상세 이미지 URL: {image_url}")
-        
-        downloaded_filepath = download_image(image_url, save_dir="downloaded_images")
-        if downloaded_filepath:
-            logging.info(f"이미지 저장 완료: {downloaded_filepath}")
-            print(f"이미지가 성공적으로 다운로드됨: {downloaded_filepath}")
-        else:
-            logging.error("이미지 다운로드 실패 (최대 재시도 후)")
-            print("이미지 다운로드 실패. 로그를 확인하세요.")
-    except WebDriverException as wd_err:
-        logging.error(f"Selenium WebDriver 에러: {str(wd_err)}")
-        print("Selenium WebDriver 에러 발생. 로그를 확인하세요.")
-    except Exception as e:
-        logging.error(f"예상치 못한 에러: {str(e)}")
-        print("예상치 못한 에러 발생. 로그를 확인하세요.")
-    finally:
-        if driver:
-            driver.quit()
+    num_images = 4  # 원하는 다운로드 이미지 개수
+    downloaded = download_multiple_images(num_images)
+    if downloaded:
+        logging.info(f"총 {len(downloaded)}장의 이미지 다운로드 완료.")
+        print(f"다운로드 완료된 이미지 파일들: {downloaded}")
+    else:
+        logging.error("이미지 다운로드 실패.")
+        print("이미지 다운로드 실패. 로그를 확인하세요.")
 
 if __name__ == "__main__":
     main()
