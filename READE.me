@@ -1,0 +1,22 @@
+이 코드의 작동 방식
+1차 방법( scrape_with_requests):
+
+. 을 사용하여 사용자 에이전트를 회전합니다 fake_useragent.
+무작위 지연을 적용하여 최대 3번의 재시도를 구현합니다.
+BeautifulSoup를 사용하여 HTML을 구문 분석하고 <span class="info_txt">"한국"이라는 텍스트가 포함된 항목을 검색합니다.
+근처 <a>또는 <div class="title">요소에서 연관된 영화 제목을 추출하려고 시도합니다.
+요소를 찾을 수 없거나 HTTP 오류가 발생하면 성공 기록이나 자세한 오류 메시지를 기록합니다.
+백업 방법( scrape_with_selenium):
+
+Selenium을 통해 헤드리스 Chrome 브라우저를 시작합니다.
+사용자 에이전트를 회전하고 동적 콘텐츠를 기다립니다.
+동일한 <span>요소를 검색하여 영화 제목을 추출해 봅니다.
+메시지와 오류를 적절히 기록합니다.
+산출:
+
+최종 JSON 출력에는 movie_title, scraping_timestamp, success_status, 및 error_message(있는 경우)이 포함됩니다.
+코드를 실행하기 전에 pip를 통해 필요한 패키지를 설치하세요.
+
+ 
+pip install requests beautifulsoup4 selenium fake-useragent
+또한 시스템 PATH에 호환 가능한 ChromeDriver 버전이 설치되어 사용 가능한지 확인하십시오(또는 해당 경로를 지정하십시오).webdriver.Chrome()초기화)
