@@ -33,5 +33,5 @@ def save_response_html_to_file(url, filename="response.html"):
 
 if __name__ == "__main__":
     # 테스트용 URL (필요한 URL로 변경 가능)
-    url = "https://search.naver.com/search.naver?where=nexearch&sm=tab_etc&mra=bkdJ&qvt=0&query=넷플릭스%20주간%20순위"
+    url = "https://m.search.naver.com/search.naver?ssc=tab.m_image.all&where=m_image&sm=tab_jum&query=%EB%82%98%ED%8A%B8%EB%9E%91+%EB%A0%88%EC%8A%A4%EC%B0%B8%ED%98%B8%ED%85%94"
     save_response_html_to_file(url)

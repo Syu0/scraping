@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Script to download multiple detailed images from a specific Naver image search result.
+Script to download multiple detailed images from a specific Naver image search result,
+with enhanced stability and dynamic search query input from a Google Spreadsheet.
 
 Requirements:
     - BeautifulSoup4
@@ -8,24 +9,19 @@ Requirements:
     - selenium
     - fake_useragent
     - pillow  (for image integrity validation)
+    - gspread
+    - google-auth
 
 Usage:
     python download_naver_image.py
 
-The script:
-    1. Loads the Naver image search page.
-    2. Saves an initial screenshot (debug_page.png).
-    3. Finds image containers ("div.tile_item._fe_image_tab_content_tile") on the page.
-    4. Randomly selects one container (ensuring different indices if possible) and clicks it.
-    5. Waits for the detailed view to load (div.sc_new.sp_viewer) and saves its screenshot (debug_detailed_page.png).
-    6. Step-by-step, navigates through:
-         - div.sc_new.sp_viewer
-         - div.viewer_image._fe_image_viewer_main_image_wrap
-         - div.image
-         - <img> tag  
-       and extracts the src attribute.
-    7. Downloads the image with retries, validates its integrity, and logs the original image URL.
-    8. Repeats the above process for a specified number of images.
+Process:
+    1. Prompt user for Google Sheets integration info.
+    2. Read the index (cell A1) and query string (cell A2) from the sheet named '베트남호텔'.
+    3. Build the search URL using the query string (e.g., "나트랑 버고호텔" => "&query=나트랑+버고호텔").
+    4. Download a specified number of images (default 4) by randomly selecting containers.
+       The images are saved in a folder named with the index (e.g., "downloaded_images/1").
+    5. Log all steps, errors, and downloaded file paths.
 """
 
 import os
@@ -42,15 +38,99 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, WebDriverException
 from PIL import Image
+from requests.exceptions import ConnectionError as ReqConnectionError
+
+# For Google Sheets integration
+import gspread
+from google.oauth2.service_account import Credentials
 
 # Configure logging to file
 logging.basicConfig(
-    filename='download.log',
+    filename='./download.log',
+    encoding='utf-8',
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
-SEARCH_URL = "https://search.naver.com/search.naver?ssc=tab.image.all&where=image&sm=tab_jum&query=나트랑+레스찹호텔"
+
+# 기본 네이버 이미지 검색 URL (QUERY 파라미터 제외)
+BASE_SEARCH_URL = "https://search.naver.com/search.naver?ssc=tab.image.all&where=image&sm=tab_jum"
+
+def get_gsheet_config():
+    """
+    Prompts the user for Google Sheets integration information.
+    
+    Returns:
+        tuple: (credentials_json, spreadsheet_id)
+    """
+    print("구글 스프레드시트 연동정보가 포함되어있습니다. 별도의 파일로 분리요망:")
+    credentials_json = r"C:\Users\skfka\OneDrive\문서\GitHub\scraping\get_hotel_image\secret\intense-reason-451806-j0-5160a24584f2.json"
+    # 백슬래시 문제 방지를 위해 raw string 또는 이스케이프 문자를 사용하세요.
+    spreadsheet_id = r"1gQ3Ac1_2sUd4EiTRwi_VCLyxNeBbsf-_z47k4JONPmc"
+    return credentials_json, spreadsheet_id
+
+def get_query_from_gsheet(credentials_json, spreadsheet_id):
+    """
+    Reads the index and query string from the Google Spreadsheet.
+    Uses the sheet named '베트남호텔' and reads:
+        - A1: index (e.g., "1")
+        - A2: query string (e.g., "나트랑 버고호텔")
+    
+    Args:
+        credentials_json (str): Path to the service account JSON file.
+        spreadsheet_id (str): Google Spreadsheet ID.
+        
+    Returns:
+        tuple: (index_value, query) as strings.
+    """
+    scopes = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
+    credentials = Credentials.from_service_account_file(credentials_json, scopes=scopes)
+    client = gspread.authorize(credentials)
+    # 사용하려는 시트명 '베트남호텔' 지정
+    worksheet = client.open_by_key(spreadsheet_id).worksheet('베트남호텔')
+    index_value = worksheet.acell("A1").value
+    query = worksheet.acell("B1").value
+    logging.info(f"구글 스프레드시트로부터 읽은 인덱스: {index_value}, QUERY 문자열: {query}")
+    return index_value, query
+
+def build_search_url(query):
+    """
+    Builds the complete search URL by appending the query parameter.
+    
+    Args:
+        query (str): The query string (e.g., "나트랑 버고호텔").
+        
+    Returns:
+        str: Complete search URL.
+    """
+    formatted_query = query.replace(" ", "+")
+    return f"{BASE_SEARCH_URL}&query={formatted_query}"
+
+def safe_driver_get(driver, url, retries=3, delay=60):
+    """
+    Attempts to load the URL with Selenium driver.
+    On failure (e.g. network issues), waits for 'delay' seconds and retries up to 'retries' times.
+    
+    Args:
+        driver (webdriver.Chrome): Selenium WebDriver instance.
+        url (str): URL to load.
+        retries (int): Maximum retry attempts.
+        delay (int): Delay in seconds between attempts.
+        
+    Returns:
+        bool: True if URL loaded successfully, False otherwise.
+    """
+    attempts = 0
+    while attempts < retries:
+        try:
+            driver.get(url)
+            logging.info(f"URL 로드 성공: {url}")
+            return True
+        except Exception as e:
+            attempts += 1
+            logging.error(f"네트워크 연결 실패, {delay}초 대기 후 재시도 ({attempts}/{retries}): {str(e)}")
+            time.sleep(delay)
+    return False
 
 def setup_driver():
     """
@@ -71,29 +151,9 @@ def setup_driver():
         raise
     return driver
 
-def get_actual_image_url(driver, image_index=2):
-    """
-    Loads the search URL, clicks the image container at the specified index,
-    saves a screenshot of the detailed view, and then step-by-step navigates
-    through the following elements to extract the detailed image URL:
-        1. div.sc_new.sp_viewer
-        2. div.viewer_image._fe_image_viewer_main_image_wrap (inside sc_new.sp_viewer)
-        3. div.image (inside main image wrap)
-        4. <img> tag (inside div.image)
-    Each step logs success/failure.
-    
-    Args:
-        driver (webdriver.Chrome): Selenium WebDriver instance.
-        image_index (int): The index of the image container to click.
-    
-    Returns:
-        str or None: The detailed image URL if extraction succeeds; otherwise, None.
-    """
-    try:
-        driver.get(SEARCH_URL)
-        logging.info(f"URL 로드 성공: {SEARCH_URL}")
-    except Exception as e:
-        logging.error(f"URL {SEARCH_URL} 로드 중 에러: {str(e)}")
+def get_actual_image_url(driver, search_url, image_index=2):
+    if not safe_driver_get(driver, search_url):
+        logging.error("검색 페이지 로드 실패")
         return None
 
     # 동적 컨텐츠 로드를 위해 대기
@@ -106,10 +166,11 @@ def get_actual_image_url(driver, image_index=2):
     except Exception as e:
         logging.error(f"초기 페이지 스크린샷 저장 실패: {str(e)}")
 
-    # 이미지 컨테이너 로드 대기
+    # 클릭할 이미지 컨테이너 로드 대기 및 검색
     try:
+        logging.info("search section 1")
         WebDriverWait(driver, 15).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "div.tile_item._fe_image_tab_content_tile"))
+            EC.presence_of_element_located((By.CSS_SELECTOR, 'div[class*="mod_image_tile"] img'))
         )
         logging.info("이미지 컨테이너 요소 로드됨.")
     except TimeoutException:
@@ -117,7 +178,8 @@ def get_actual_image_url(driver, image_index=2):
         return None
 
     try:
-        div_elements = driver.find_elements(By.CSS_SELECTOR, "div.tile_item._fe_image_tab_content_tile")
+        logging.info("search section 2")
+        div_elements = driver.find_elements(By.CSS_SELECTOR, 'div[class*="mod_image_tile"] img')
         logging.info(f"페이지에서 {len(div_elements)}개의 이미지 컨테이너 발견됨.")
         if len(div_elements) <= image_index:
             logging.error(f"요청한 인덱스({image_index})가 컨테이너 개수보다 큼.")
@@ -131,8 +193,9 @@ def get_actual_image_url(driver, image_index=2):
 
     # 상세보기 페이지 로드 대기: div.sc_new.sp_viewer
     try:
+        logging.info("search section 3")
         WebDriverWait(driver, 15).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "div.sc_new.sp_viewer"))
+            EC.presence_of_element_located((By.CSS_SELECTOR, 'div[class="image _viewerImageBox"] img'))
         )
         logging.info("상세보기 컨테이너(div.sc_new.sp_viewer) 로드됨.")
     except TimeoutException:
@@ -146,38 +209,22 @@ def get_actual_image_url(driver, image_index=2):
     except Exception as e:
         logging.error(f"상세보기 페이지 스크린샷 저장 실패: {str(e)}")
     
-    # 단계별 태그 탐색
+    # 단계별 태그 탐색: 상세보기 컨테이너 내에서 이미지 태그 찾기
     try:
         # 단계 1: div.sc_new.sp_viewer
         try:
-            viewer_div = driver.find_element(By.CSS_SELECTOR, "div.sc_new.sp_viewer")
+            viewer_div = driver.find_element(By.CSS_SELECTOR, 'div[class="image _viewerImageBox"]')
             logging.info("단계 1: div.sc_new.sp_viewer 요소 발견.")
         except Exception as e:
             logging.error("단계 1: div.sc_new.sp_viewer 요소 탐색 실패")
             return None
-
-        # 단계 2: div.viewer_image._fe_image_viewer_main_image_wrap 내부 탐색
+ 
+        # 단계 4: div.image 내부의 <img> 태그 찾기
         try:
-            main_image_wrap = viewer_div.find_element(By.CSS_SELECTOR, "div.viewer_image._fe_image_viewer_main_image_wrap")
-            logging.info("단계 2: div.viewer_image._fe_image_viewer_main_image_wrap 요소 발견.")
+            img_element = viewer_div.find_element(By.TAG_NAME, "img")
+            logging.info("단계 2: <img> 태그 발견.")
         except Exception as e:
-            logging.error("단계 2: div.viewer_image._fe_image_viewer_main_image_wrap 요소 탐색 실패")
-            return None
-
-        # 단계 3: main_image_wrap 내부에서 div.image 요소 탐색
-        try:
-            image_div = main_image_wrap.find_element(By.CSS_SELECTOR, "div.image")
-            logging.info("단계 3: div.image 요소 발견.")
-        except Exception as e:
-            logging.error("단계 3: div.image 요소 탐색 실패")
-            return None
-
-        # 단계 4: image_div 내부의 <img> 태그 탐색
-        try:
-            img_element = image_div.find_element(By.TAG_NAME, "img")
-            logging.info("단계 4: <img> 태그 발견.")
-        except Exception as e:
-            logging.error("단계 4: <img> 태그 탐색 실패")
+            logging.error("단계 2: <img> 태그 탐색 실패")
             return None
 
         # 단계 5: <img> 태그의 src 속성 추출
@@ -191,6 +238,8 @@ def get_actual_image_url(driver, image_index=2):
     except Exception as e:
         logging.error(f"상세 이미지 URL 추출 중 전반적 에러: {str(e)}")
         return None
+
+
 
 def download_image(url, save_dir, max_retries=3):
     """
@@ -233,17 +282,24 @@ def download_image(url, save_dir, max_retries=3):
                 raise Exception(f"HTTP 상태 코드 {response.status_code}")
         except Exception as e:
             logging.error(f"다운로드 시도 {attempt}회 실패: {str(e)}")
-            time.sleep(2)
+            # 연결 오류일 경우 60초 대기, 그 외는 2초 대기
+            if isinstance(e, ReqConnectionError):
+                time.sleep(60)
+            else:
+                time.sleep(2)
     
     logging.error("최대 재시도 횟수 후에도 이미지 다운로드 실패")
     return None
 
-def download_multiple_images(num_images=4):
+def download_multiple_images(search_url, num_images=4, folder_index="default"):
     """
     Downloads multiple images by randomly selecting image containers from the search results.
+    Saves the images in a folder named with the given folder_index.
     
     Args:
+        search_url (str): The complete search URL.
         num_images (int): Number of images to download.
+        folder_index (str): Folder name (based on the index from Google Sheet) to save images.
     
     Returns:
         list: List of file paths for the successfully downloaded images.
@@ -252,12 +308,17 @@ def download_multiple_images(num_images=4):
     downloaded_filepaths = []
     used_indices = []
     
+    # 기본 저장 폴더를 folder_index 하위로 지정
+    base_save_dir = os.path.join("downloaded_images", folder_index)
+    
     for i in range(num_images):
         try:
-            # 새로 검색 페이지 로드
-            driver.get(SEARCH_URL)
+            # 새로 검색 페이지 로드 (네트워크 재시도 포함)
+            if not safe_driver_get(driver, search_url):
+                logging.error("검색 페이지 로드 실패로 인해 해당 이미지 스킵")
+                continue
             time.sleep(5)
-            containers = driver.find_elements(By.CSS_SELECTOR, "div.tile_item._fe_image_tab_content_tile")
+            containers = driver.find_elements(By.CSS_SELECTOR, 'div[class*="mod_image_tile"] img')
             total = len(containers)
             if total == 0:
                 logging.error("검색 결과에서 이미지 컨테이너를 찾지 못함.")
@@ -271,13 +332,13 @@ def download_multiple_images(num_images=4):
             used_indices.append(chosen_index)
             logging.info(f"선택된 이미지 인덱스: {chosen_index} (총 {total}개 중)")
             
-            detailed_url = get_actual_image_url(driver, image_index=chosen_index)
+            detailed_url = get_actual_image_url(driver, search_url, image_index=chosen_index)
             if not detailed_url:
                 logging.error("상세 이미지 URL 추출 실패")
                 continue
             logging.info(f"다운로드할 상세 이미지 URL: {detailed_url}")
             
-            saved_path = download_image(detailed_url, save_dir="downloaded_images")
+            saved_path = download_image(detailed_url, save_dir=base_save_dir)
             if saved_path:
                 logging.info(f"이미지 저장 완료: {saved_path}")
                 downloaded_filepaths.append(saved_path)
@@ -292,11 +353,24 @@ def download_multiple_images(num_images=4):
 def main():
     """
     Main function to execute the process:
-        1. Download multiple images.
-        2. Log results.
+        1. Read the index and QUERY string from Google Sheets.
+        2. Build the search URL.
+        3. Download multiple images and save them in a folder named with the index.
+        4. Log results.
     """
+    credentials_json, spreadsheet_id = get_gsheet_config()
+    index_value, query = get_query_from_gsheet(credentials_json, spreadsheet_id)
+    if not query:
+        logging.error("구글 스프레드시트로부터 QUERY 문자열을 읽어오지 못함.")
+        print("QUERY 문자열을 읽어오지 못했습니다. 정보를 확인하세요.")
+        return
+    
+    search_url = build_search_url(query)
+    logging.info(f"생성된 검색 URL: {search_url}")
+    print(f"검색 URL: {search_url}")
+    
     num_images = 4  # 원하는 다운로드 이미지 개수
-    downloaded = download_multiple_images(num_images)
+    downloaded = download_multiple_images(search_url, num_images, folder_index=index_value)
     if downloaded:
         logging.info(f"총 {len(downloaded)}장의 이미지 다운로드 완료.")
         print(f"다운로드 완료된 이미지 파일들: {downloaded}")
