@@ -27,6 +27,8 @@ HASHNODE_BLOG_ID = keys["HASHNODE_BLOG_ID"]
 CREDENTIALS_JSON = keys["CREDENTIALS_JSON"]
 SHEET_NAME = keys["SHEET_NAME"]
 
+# 명시적OpenAI API 키 설정
+openai.api_key = OPENAI_API_KEY
 
 def get_gsheet_config():
     """
@@ -41,17 +43,71 @@ def get_gsheet_config():
     spreadsheet_id = r"1gQ3Ac1_2sUd4EiTRwi_VCLyxNeBbsf-_z47k4JONPmc"
     return credentials_json, spreadsheet_id
 
-# 구글 스프레드시트에서 데이터 가져오기
-def get_google_sheet_data(credentials_json, spreadsheet_id, tab_name, column_index):
+credentials_json, spreadsheet_id = get_gsheet_config()
+
+
+
+# hotel_name 가져오기 (B열이 비어있는 경우만)
+def get_hotel_name():
+    sheet = get_google_sheet(credentials_json, spreadsheet_id,'베트남호텔')
+    data = sheet.get_all_values()
+    for row_idx, row in enumerate(data[1:], start=2):  # 첫 번째 행은 헤더이므로 건너뜀
+        hotel_name = row[0].strip()
+        if row[1].strip() == "":  # B열이 비어있는 경우
+            return hotel_name, row_idx
+    return None, None
+
+# 구글 시트 연동 설정
+def get_google_sheet(credentials_json, spreadsheet_id,tab_name):
     scopes = ["https://www.googleapis.com/auth/spreadsheets"]
     credentials = Credentials.from_service_account_file(credentials_json, scopes=scopes)
     client = gspread.authorize(credentials)
     worksheet = client.open_by_key(spreadsheet_id).worksheet(tab_name)
  
+    return worksheet
+
+
+
+ #ChatGPT를 활용하여 최신 정보 가져오기
+def fetch_hotel_details(hotel_name):
+    prompt = f"""
+    최신 정보를 반영하여 아래 호텔 정보를 제공해줘:
+    호텔 이름: {hotel_name}
+    필요한 정보:
+    1. 대표적인 룸타입 (예: 디럭스 룸, 스탠다드 룸 등)
+    2. 주소 (가급적 정확한 위치)
+    3. 청결도 (사용자 후기를 반영, 예: 청결함, 벌레 없음, 수압 좋음 등)
+    4. 편의시설 (조식 제공 여부, 수영장, 공항 픽업 등 포함)
+    """
+    response = openai.ChatCompletion.create(
+        model="gpt-4-turbo",
+        messages=[
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": prompt}
+        ]
+    )
+    details = response.choices[0].message.content
+    return details.split("\n")
+
+
+# 구글 시트 업데이트
+def update_google_sheet(row_idx, post_url):
+    sheet = get_google_sheet(credentials_json, spreadsheet_id,"베트남호텔")
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    sheet.update_acell(f"B{row_idx}", current_time)  # 포스팅 완료 시간 업데이트
+    sheet.update_acell(f"D{row_idx}", post_url)  # 포스팅된 URL 업데이트
+
+
+# 구글 스프레드시트에서 데이터 가져오기
+def get_google_sheet_data(credentials_json, spreadsheet_id, tab_name, column_index):
+ 
+    worksheet = get_google_sheet(credentials_json, spreadsheet_id,tab_name)
+ 
     return worksheet.col_values(column_index)
 
+
 # 랜덤 후반 멘트 리스트를 구글 스프레드시트에서 가져오기
-credentials_json, spreadsheet_id = get_gsheet_config()
+
 RANDOM_CLOSING_REMARKS = get_google_sheet_data(credentials_json, spreadsheet_id, "후반멘트", 1)
 # HTML 형식으로 글 생성 함수
 def generate_blog_content(hotel_name, location, room_type, address, map_link, cleanliness, amenities, image_paths):
@@ -164,35 +220,28 @@ def post_to_hashnode(title, content):
     
     return publish_response
 
-
-# 테스트 실행
+# Hashnode 포스팅 실행
 def main():
-    hotel_name = "나트랑 버고 호텔"
-    location = "나트랑 시내 가성비 숙소"
-    room_type = "디럭스 룸"
-    address = "123 Beach St, Nha Trang, Vietnam"
-    map_link = "https://goo.gl/maps"
-    cleanliness = "청결함, 수압 좋음, 벌레 없음"
-    amenities = "조식 제공, 수영장 있음, 공항 픽업 가능"
+    hotel_name, row_idx = get_hotel_name()
+    if not hotel_name:
+        print("포스팅할 호텔 데이터가 없습니다.")
+        return
     
-    # 이미지 파일 경로 지정 (사용자가 제공하는 경로 기반)
-    image_folder = "your_image_folder_path"  # 실제 경로로 변경해야 함
-    image_paths = [os.path.join(image_folder, f"image{i+1}.jpg") for i in range(3)]
+    hotel_details = fetch_hotel_details(hotel_name)
+    room_type, address, cleanliness, amenities = hotel_details[:4]
     
-    title = f"{location} {hotel_name} {room_type}"
+    title = f"{hotel_name} ({room_type})"
     content = f"## {title}\n\n" + \
-              f"![호텔 위치]({image_paths[0]})\n\n" + \
-              f"**🏨 호텔 위치**\n\n📍 주소: {address}\n\n[🗺 구글 지도 보기]({map_link})\n\n" + \
-              f"**🛏️ 호텔 기본 정보**\n\n| 항목 | 내용 |\n|------|------|\n| 위치 특징 | {location} |\n| 룸타입 | {room_type} |\n| 청결도 | {cleanliness} |\n| 편의시설 | {amenities} |\n\n" + \
-              f"![호텔 편의시설]({image_paths[1]})\n\n" + \
-              f"**🏖️ 호텔 편의시설**\n\n- 🏊‍♂️ 수영장: 있음 / 없음\n- 🍽 조식: 제공 / 불포함\n- 🚕 공항 픽업: 가능 / 불가능\n\n" + \
-              f"![호텔 주변]({image_paths[2]})\n\n" + \
-              f"{random.choice(RANDOM_CLOSING_REMARKS)}\n\n" + \
-              f"**📌 다음 포스팅은 {hotel_name} 근처 맛집 추천으로 만나요! 🎉**\n\n" + \
-              f"#나트랑자유여행 #나트랑숙소추천 #가성비호텔 #나트랑호텔"
+              f"**🏨 호텔 정보**\n\n- 📍 주소: {address}\n- 🛏️ 룸타입: {room_type}\n- 🧹 청결도: {cleanliness}\n- 🏊 편의시설: {amenities}\n\n"
     
     post_response = post_to_hashnode(title, content)
-    print("포스팅 완료:", post_response)
+    if "errors" in post_response:
+        print("포스팅 실패:", post_response)
+        return
+    
+    post_url = post_response["data"]["publishDraft"]["post"]["url"]
+    update_google_sheet(row_idx, post_url)
+    print("포스팅 완료, URL:", post_url)
 
 
     ''' 
