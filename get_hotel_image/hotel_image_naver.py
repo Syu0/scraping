@@ -327,7 +327,7 @@ def download_multiple_images(search_url, num_images=4, folder_index="default"):
     used_indices = []
     
     # 기본 저장 폴더를 folder_index 하위로 지정
-    base_save_dir = os.path.join("../../Dropbox/automation material/downloaded_images", folder_index)
+    base_save_dir = os.path.join("../../Dropbox/Dropbox/automation material/downloaded_images", folder_index)
     
     for i in range(num_images):
         try:
