@@ -6,7 +6,7 @@ import os
 # For Google Sheets integration
 import gspread
 from google.oauth2.service_account import Credentials
-
+import re
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, "config.txt")
@@ -26,6 +26,7 @@ HASHNODE_API_KEY = keys["HASHNODE_API_KEY"]
 HASHNODE_BLOG_ID = keys["HASHNODE_BLOG_ID"]
 CREDENTIALS_JSON = keys["CREDENTIALS_JSON"]
 SHEET_NAME = keys["SHEET_NAME"]
+IMAGE_FOLDER=keys["IMAGE_FOLDER"]
 
 # 명시적OpenAI API 키 설정
 openai.api_key = OPENAI_API_KEY
@@ -66,9 +67,8 @@ def get_google_sheet(credentials_json, spreadsheet_id,tab_name):
  
     return worksheet
 
-
-
- #ChatGPT를 활용하여 최신 정보 가져오기
+ 
+# ChatGPT를 활용하여 최신 정보 가져오기
 def fetch_hotel_details(hotel_name):
     prompt = f"""
     최신 정보를 반영하여 아래 호텔 정보를 제공해줘:
@@ -82,12 +82,20 @@ def fetch_hotel_details(hotel_name):
     response = openai.ChatCompletion.create(
         model="gpt-4-turbo",
         messages=[
-            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "system", "content": "You are a helpful assistant. Only provide factual and structured responses."},
             {"role": "user", "content": prompt}
         ]
     )
     details = response.choices[0].message.content
+    if "죄송합니다" in details:
+        details = details.split("죄송합니다")[0]  # 불필요한 문구 제거
     return details.split("\n")
+
+# 블로그 제목 생성 (SEO 최적화 적용)
+def generate_seo_title(hotel_name, cleanliness, amenities, room_type):
+    keywords = re.findall(r"\b(청결함|수압 좋음|벌레 없음|조식 제공|수영장|공항 픽업)\b", cleanliness + amenities)
+    keyword_part = " ".join(set(keywords)) if keywords else "편안한 숙박"
+    return f"{hotel_name} - {keyword_part} {amenities} | {datetime.now().strftime('%Y-%m-%d')}"
 
 
 # 구글 시트 업데이트
@@ -109,7 +117,10 @@ def get_google_sheet_data(credentials_json, spreadsheet_id, tab_name, column_ind
 # 랜덤 후반 멘트 리스트를 구글 스프레드시트에서 가져오기
 
 RANDOM_CLOSING_REMARKS = get_google_sheet_data(credentials_json, spreadsheet_id, "후반멘트", 1)
+
+'''
 # HTML 형식으로 글 생성 함수
+@DeprecationWarning
 def generate_blog_content(hotel_name, location, room_type, address, map_link, cleanliness, amenities, image_paths):
     html_content = f"""
     <html>
@@ -159,6 +170,7 @@ def generate_blog_content(hotel_name, location, room_type, address, map_link, cl
     </html>
     """
     return html_content
+'''
 
 # Hashnode에 포스팅하는 함수
 def post_to_hashnode(title, content):
@@ -220,6 +232,34 @@ def post_to_hashnode(title, content):
     
     return publish_response
 
+# Dropbox 공유 링크를 직접 이미지 URL로 변환
+def convert_dropbox_link(share_link):
+    return share_link.replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", "")
+
+
+# 본문 구성
+def generate_blog_content(title, address, room_type, cleanliness, amenities):
+    dropbox_links = [
+        "https://www.dropbox.com/scl/fi/9t0ltmj40mveg669n5iy9/image2.jpg?rlkey=4h42jdgedtmyv7ktlakn3r9uh&st=7ld98uz7&dl=0",
+        "https://www.dropbox.com/scl/fi/6r4qyh8o6701s9cmhd70r/image1.jpg?rlkey=mf3w739rbqn2i3i0zwptva0bl&st=o0q79gqx&dl=0",
+        "https://www.dropbox.com/scl/fi/v8j6arq7x3j7fh93ntar9/image3.jpg?rlkey=s0s5c8b8qu7kaa86nnsb0og6h&st=pclnlenh&dl=0"
+    ]
+    
+    converted_links = [convert_dropbox_link(link) for link in dropbox_links]
+    print("[변환된 이미지 URL 확인]", converted_links[0])  # 로그 추가
+    
+    image_markdown = "\n".join([f"![이미지]({link})" for link in converted_links])
+    content = f"## {title}\n\n" + \
+              image_markdown + "\n\n" + \
+              "### 🏨 호텔 개요\n" + \
+              f"- **주소**: {address}\n" + \
+              f"- **룸타입**: {room_type}\n" + \
+              "### 🧹 청결도\n" + \
+              f"{cleanliness}\n" + \
+              "### 🏊 편의시설\n" + \
+              f"{amenities}\n\n"
+    return content
+
 # Hashnode 포스팅 실행
 def main():
     hotel_name, row_idx = get_hotel_name()
@@ -230,9 +270,15 @@ def main():
     hotel_details = fetch_hotel_details(hotel_name)
     room_type, address, cleanliness, amenities = hotel_details[:4]
     
-    title = f"{hotel_name} ({room_type})"
-    content = f"## {title}\n\n" + \
-              f"**🏨 호텔 정보**\n\n- 📍 주소: {address}\n- 🛏️ 룸타입: {room_type}\n- 🧹 청결도: {cleanliness}\n- 🏊 편의시설: {amenities}\n\n"
+    # ✅ SEO 최적화된 블로그 제목 생성
+    title = generate_seo_title(hotel_name, cleanliness, amenities, room_type)
+    
+    # ✅ 이미지 추가
+    image_folder = IMAGE_FOLDER  # 실제 이미지 폴더 경로 지정
+    image_paths = [os.path.join(image_folder,str(row_idx), f"image{i+1}.jpg") for i in range(3)]
+    
+    # ✅ 본문 내용 생성
+    content = generate_blog_content(title, address, room_type, cleanliness, amenities)
     
     post_response = post_to_hashnode(title, content)
     if "errors" in post_response:
@@ -242,18 +288,6 @@ def main():
     post_url = post_response["data"]["publishDraft"]["post"]["url"]
     update_google_sheet(row_idx, post_url)
     print("포스팅 완료, URL:", post_url)
-
-
-    ''' 
-    content = generate_blog_content(hotel_name, location, room_type, address, map_link, cleanliness, amenities, image_paths)
-    
-    with open("blog_post.html", "w", encoding="utf-8") as file:
-        file.write(content)
-    
-    print("HTML 파일로 블로그 글 생성 완료: blog_post.html")
-    '''
-
-
 
 if __name__ == "__main__":
     main()
