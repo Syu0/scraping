@@ -20,7 +20,7 @@ Process:
     2. Read the index (cell A1) and query string (cell A2) from the sheet named '베트남호텔'.
     3. Build the search URL using the query string (e.g., "나트랑 버고호텔" => "&query=나트랑+버고호텔").
     4. Download a specified number of images (default 4) by randomly selecting containers.
-       The images are saved in a folder named with the index (e.g., "downloaded_images/1").
+       The images are saved in a folder named with the index (e.g., "../../Dropbox/down/1").
     5. Log all steps, errors, and downloaded file paths.
 """
 
@@ -69,29 +69,47 @@ def get_gsheet_config():
     spreadsheet_id = r"1gQ3Ac1_2sUd4EiTRwi_VCLyxNeBbsf-_z47k4JONPmc"
     return credentials_json, spreadsheet_id
 
+
 def get_query_from_gsheet(credentials_json, spreadsheet_id):
     """
-    Reads the index and query string from the Google Spreadsheet.
-    Uses the sheet named '베트남호텔' and reads:
-        - A1: index (e.g., "1")
-        - A2: query string (e.g., "나트랑 버고호텔")
-    
-    Args:
-        credentials_json (str): Path to the service account JSON file.
-        spreadsheet_id (str): Google Spreadsheet ID.
-        
+    Reads the title (A열) from the Google Spreadsheet.
+    Finds the first row in sheet '베트남호텔' where:
+        - Column A has data
+        - Column C is empty
+
     Returns:
-        tuple: (index_value, query) as strings.
+        tuple: (title, index_value, worksheet) if a valid row is found;
+               otherwise (None, None, worksheet).
+
+    Explanation:
+        - title: A열의 문자열 (예: "나트랑 레스참호텔")
+        - index_value: 해당 행 번호 (int). 예: 2 -> 스프레드시트의 2행
+        - worksheet: gspread Worksheet 객체
     """
-    scopes = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
+    scopes = ["https://www.googleapis.com/auth/spreadsheets"]
     credentials = Credentials.from_service_account_file(credentials_json, scopes=scopes)
     client = gspread.authorize(credentials)
-    # 사용하려는 시트명 '베트남호텔' 지정
     worksheet = client.open_by_key(spreadsheet_id).worksheet('베트남호텔')
-    index_value = worksheet.acell("A1").value
-    query = worksheet.acell("B1").value
-    logging.info(f"구글 스프레드시트로부터 읽은 인덱스: {index_value}, QUERY 문자열: {query}")
-    return index_value, query
+
+    all_values = worksheet.get_all_values()  # 전체 데이터를 2차원 리스트로 가져옴
+
+    # enumerate(all_values, start=2)는 실제 시트에서 2번째 행부터 데이터라고 가정 (1행은 헤더 등)
+    for r_idx, row in enumerate(all_values, start=2):
+        for c_idx, val in enumerate(row):
+        # A열: row[0], C열: row[2] 
+            query = row[0].strip() if row[0] else ""
+            col_c = row[2].strip() if row[2] else ""
+            if len(row) >= 3:
+                # A열(query)에 값이 있고, C열(col_c)이 비어있는 경우
+                if query and not col_c:
+                    index_value = r_idx-1  # i는 스프레드시트에서의 실제 행 번호
+                    logging.info(f"구글 스프레드시트 {index_value}행 발견: TITLE={query}")
+                    return query, index_value, worksheet
+
+    logging.info("A열에 데이터가 있고 C열이 비어있는 행을 찾지 못함.")
+    return None, None, worksheet
+
+
 
 def build_search_url(query):
     """
@@ -309,7 +327,7 @@ def download_multiple_images(search_url, num_images=4, folder_index="default"):
     used_indices = []
     
     # 기본 저장 폴더를 folder_index 하위로 지정
-    base_save_dir = os.path.join("downloaded_images", folder_index)
+    base_save_dir = os.path.join("../../Dropbox/automation material/downloaded_images", folder_index)
     
     for i in range(num_images):
         try:
@@ -350,6 +368,16 @@ def download_multiple_images(search_url, num_images=4, folder_index="default"):
     driver.quit()
     return downloaded_filepaths
 
+def update_google_sheet(sheet, index_value):
+    """구글 스프레드시트 C 셀에 다운로드 완료 시각 업데이트"""
+ 
+    # ✅ 현재 시간 기록
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cell_address = f"C{index_value}"  # index_value가 행 번호라고 가정
+    sheet.update_acell(cell_address, current_time)
+    
+    print(f"구글 스프레드시트 {cell_address} 업데이트 완료: {current_time}")
+
 def main():
     """
     Main function to execute the process:
@@ -359,21 +387,21 @@ def main():
         4. Log results.
     """
     credentials_json, spreadsheet_id = get_gsheet_config()
-    index_value, query = get_query_from_gsheet(credentials_json, spreadsheet_id)
+    query, index_value , sheet = get_query_from_gsheet(credentials_json, spreadsheet_id)
     if not query:
         logging.error("구글 스프레드시트로부터 QUERY 문자열을 읽어오지 못함.")
         print("QUERY 문자열을 읽어오지 못했습니다. 정보를 확인하세요.")
         return
-    
     search_url = build_search_url(query)
     logging.info(f"생성된 검색 URL: {search_url}")
-    print(f"검색 URL: {search_url}")
+    print(f"검색 URL: {search_url}")        
     
     num_images = 4  # 원하는 다운로드 이미지 개수
-    downloaded = download_multiple_images(search_url, num_images, folder_index=index_value)
+    downloaded = download_multiple_images(search_url, num_images, folder_index=str(index_value))
     if downloaded:
         logging.info(f"총 {len(downloaded)}장의 이미지 다운로드 완료.")
         print(f"다운로드 완료된 이미지 파일들: {downloaded}")
+        update_google_sheet(sheet, index_value)
     else:
         logging.error("이미지 다운로드 실패.")
         print("이미지 다운로드 실패. 로그를 확인하세요.")
