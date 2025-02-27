@@ -1,11 +1,12 @@
 # Agoda Hotel Scraper
 
 ## 📌 Overview
-This Python script automates the process of scraping hotel details from Agoda and saving them to Google Sheets. It runs independently on a scheduled basis (once per hour) and only updates Google Sheets if column A has data and column F is empty.
+This Python script automates the process of scraping hotel details from Agoda and saving them to Google Sheets. It runs independently on a scheduled basis (once per hour) and only updates Google Sheets if column A has data, column E contains a valid hotel URL, and column F is empty.
 
 ## 🚀 Features
 - **Scrapes hotel details** from Agoda (hotel name, price, location, review score, features, and reviews summary).
-- **Stores extracted data in Google Sheets** in column F, ensuring that it only runs if column A has data and F is empty.
+- **Stores extracted data in Google Sheets** in column F, ensuring that it only runs if column A and E have data and F is empty.
+- **Automatically extracts hotel URLs from column E** in Google Sheets.
 - **Runs automatically every hour** using the `schedule` library.
 
 ## 📂 Setup & Installation
@@ -44,22 +45,22 @@ The script will automatically execute once per hour.
 ## 🛠 How It Works
 1. **Checks Google Sheets:**
    - Reads column A for existing hotel names.
+   - Reads column E for the corresponding hotel URL.
    - Checks if column F is empty.
-   - If both conditions are met, it proceeds with scraping.
+   - If all conditions are met, it proceeds with scraping.
 2. **Scrapes Hotel Data from Agoda:**
    - Extracts hotel name, price, location, review score, features, and review summaries.
 3. **Saves Data to Google Sheets:**
-   - Stores data in column F, starting at the specified row.
+   - Stores data in column F, starting at the appropriate row.
 4. **Runs Every Hour:**
    - Uses `schedule` to repeat the process automatically.
 
 ## 📌 Example Output (Saved in Google Sheets)
-| A (Hotel Name) | B (Price) | C (Location) | D (Review Score) | E (Features) | F (Updated At) |
+| A (Hotel Name) | B (Price) | C (Location) | D (Review Score) | E (Hotel URL) | F (Updated At) |
 |---------------|----------|--------------|----------------|-------------|---------------|
-| Virgo Hotel  | ₩35,678  | Nha Trang    | 5성급         | Great view  | 2025-02-26 14:00:00 |
+| Virgo Hotel  | ₩35,678  | Nha Trang    | 5성급         | [Agoda Link] | 2025-02-26 14:00:00 |
 
 ## 📬 Contact
 If you have any issues or suggestions, feel free to reach out!
 
 Happy scraping! 🚀
-

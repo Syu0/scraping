@@ -50,6 +50,30 @@ def should_execute(idx):
         return True
     return False
 
+    
+def get_next_available_row():
+    """
+    Google Sheets에서 A열과 E열이 존재하고 F열이 비어있는 첫 번째 행 번호와 URL을 반환합니다.
+    """
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
+    credentials = Credentials.from_service_account_file(CREDENTIALS_JSON, scopes=scopes)
+    client = gspread.authorize(credentials)
+    worksheet = client.open_by_key(SPREADSHEET_ID).worksheet(TAB_NAME)
+    
+    a_column_values = worksheet.col_values(1)  # A열 데이터
+    e_column_values = worksheet.col_values(5)  # E열 데이터 (호텔 URL)
+    f_column_values = worksheet.col_values(6)  # F열 데이터
+    
+    for idx in range(1, len(a_column_values) + 1):
+        if (idx <= len(e_column_values) and e_column_values[idx - 1] != "") and \
+           (idx > len(f_column_values) or f_column_values[idx - 1] == ""):
+            return idx, e_column_values[idx - 1]  # idx와 URL 반환
+    return None, None  # 저장할 행이 없음
+
+
 def scrape_agoda_hotel_info(url):
     """
     Selenium을 사용하여 Agoda 호텔 페이지에서 호텔명, 가격, 위치, 별점, 주요특징, 이용후기 요약을 크롤링합니다.
@@ -147,13 +171,13 @@ def save_to_google_sheets(hotel_data, idx):
         worksheet.update_cell(row, col + i, value)
 
 def job():
-    idx = 3  # 저장할 행 번호
-    if should_execute(idx):
-        hotel_url = "https://www.agoda.com/ko-kr/virgo-hotel/hotel/nha-trang-vn.html"
+    idx, hotel_url = get_next_available_row()
+    if idx and hotel_url:
         hotel_info = scrape_agoda_hotel_info(hotel_url)
         save_to_google_sheets(hotel_info, idx)
 
-# 한 시간마다 실행하도록 설정
+
+#한 시간마다 실행하도록 설정
 schedule.every(1).hours.do(job)
 
 while True:
