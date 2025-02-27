@@ -1,0 +1,65 @@
+# Agoda Hotel Scraper
+
+## 📌 Overview
+This Python script automates the process of scraping hotel details from Agoda and saving them to Google Sheets. It runs independently on a scheduled basis (once per hour) and only updates Google Sheets if column A has data and column F is empty.
+
+## 🚀 Features
+- **Scrapes hotel details** from Agoda (hotel name, price, location, review score, features, and reviews summary).
+- **Stores extracted data in Google Sheets** in column F, ensuring that it only runs if column A has data and F is empty.
+- **Runs automatically every hour** using the `schedule` library.
+
+## 📂 Setup & Installation
+### 1️⃣ Prerequisites
+Make sure you have the following installed:
+- Python 3.x
+- Google Sheets API credentials (service account JSON file)
+- Required Python libraries (install via `pip`)
+
+### 2️⃣ Install Dependencies
+Run the following command to install necessary dependencies:
+```bash
+pip install selenium gspread google-auth google-auth-oauthlib google-auth-httplib2 requests beautifulsoup4 schedule webdriver-manager
+```
+
+### 3️⃣ Google Sheets Setup
+1. **Enable Google Sheets API** in your Google Cloud console.
+2. **Create a service account** and download the credentials JSON file.
+3. **Share the Google Sheets document** with the service account email (`client_email` from the credentials file) and grant **Editor** permissions.
+
+### 4️⃣ Configure `config.txt`
+Create a `config.txt` file in the same directory as the script and add the following values:
+```
+CREDENTIALS_JSON=your_google_credentials.json
+SPREADSHEET_ID=your_google_sheet_id
+TAB_NAME=your_google_sheet_tab_name
+```
+
+## 🏃‍♂️ How to Run the Script
+Run the script manually using:
+```bash
+python agoda_hotel_scraper.py
+```
+The script will automatically execute once per hour.
+
+## 🛠 How It Works
+1. **Checks Google Sheets:**
+   - Reads column A for existing hotel names.
+   - Checks if column F is empty.
+   - If both conditions are met, it proceeds with scraping.
+2. **Scrapes Hotel Data from Agoda:**
+   - Extracts hotel name, price, location, review score, features, and review summaries.
+3. **Saves Data to Google Sheets:**
+   - Stores data in column F, starting at the specified row.
+4. **Runs Every Hour:**
+   - Uses `schedule` to repeat the process automatically.
+
+## 📌 Example Output (Saved in Google Sheets)
+| A (Hotel Name) | B (Price) | C (Location) | D (Review Score) | E (Features) | F (Updated At) |
+|---------------|----------|--------------|----------------|-------------|---------------|
+| Virgo Hotel  | ₩35,678  | Nha Trang    | 5성급         | Great view  | 2025-02-26 14:00:00 |
+
+## 📬 Contact
+If you have any issues or suggestions, feel free to reach out!
+
+Happy scraping! 🚀
+
