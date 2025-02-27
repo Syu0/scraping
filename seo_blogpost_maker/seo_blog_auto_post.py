@@ -7,6 +7,8 @@ import os
 import gspread
 from google.oauth2.service_account import Credentials
 import re
+import dropbox
+
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, "config.txt")
@@ -26,7 +28,10 @@ HASHNODE_API_KEY = keys["HASHNODE_API_KEY"]
 HASHNODE_BLOG_ID = keys["HASHNODE_BLOG_ID"]
 CREDENTIALS_JSON = keys["CREDENTIALS_JSON"]
 SHEET_NAME = keys["SHEET_NAME"]
+SHEET_ID = keys["SHEET_ID"]
 IMAGE_FOLDER=keys["IMAGE_FOLDER"]
+DROPBOX_ACCESS_TOKEN = keys["DROPBOX_ACCESS_TOKEN"]
+DROPBOX_IMAGE_FOLDER = "/automation material/downloaded_images"
 
 # 명시적OpenAI API 키 설정
 openai.api_key = OPENAI_API_KEY
@@ -41,7 +46,7 @@ def get_gsheet_config():
 
     credentials_json = r"C:\Users\skfka\OneDrive\문서\GitHub\scraping\get_hotel_image\secret\intense-reason-451806-j0-5160a24584f2.json"
     # 백슬래시 문제 방지를 위해 raw string 또는 이스케이프 문자를 사용하세요.
-    spreadsheet_id = r"1gQ3Ac1_2sUd4EiTRwi_VCLyxNeBbsf-_z47k4JONPmc"
+    spreadsheet_id = SHEET_ID
     return credentials_json, spreadsheet_id
 
 credentials_json, spreadsheet_id = get_gsheet_config()
@@ -67,6 +72,34 @@ def get_google_sheet(credentials_json, spreadsheet_id,tab_name):
  
     return worksheet
 
+
+# Dropbox에서 폴더 목록 확인 (디버깅용)
+def list_dropbox_folders():
+    dbx = dropbox.Dropbox(DROPBOX_ACCESS_TOKEN)
+    try:
+        result = dbx.files_list_folder("")
+        folders = [entry.path_display for entry in result.entries if isinstance(entry, dropbox.files.FolderMetadata)]
+        print("[Dropbox 존재하는 폴더 목록]:", folders)
+    except Exception as e:
+        print("Dropbox 폴더 목록 가져오기 오류:", e)
+
+# Dropbox에서 이미지 공유 링크 가져오기
+def get_dropbox_links(subfolder):
+    dbx = dropbox.Dropbox(DROPBOX_ACCESS_TOKEN)
+    folder_path = f"{DROPBOX_IMAGE_FOLDER}/{subfolder}"
+    print(f"[Dropbox 폴더 확인] {folder_path}")  # 폴더 경로 로그 추가
+    try:
+        result = dbx.files_list_folder(folder_path)
+        links = []
+        for entry in result.entries:
+            shared_link = dbx.sharing_create_shared_link_with_settings(entry.path_display).url
+            links.append(shared_link.replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", ""))
+        print("[Dropbox 이미지 링크 확인]", links)  # 로그 추가
+        return links
+    except Exception as e:
+        print("Dropbox 링크 가져오기 오류:", e)
+        list_dropbox_folders()
+        return []
  
 # ChatGPT를 활용하여 최신 정보 가져오기
 def fetch_hotel_details(hotel_name):
@@ -122,6 +155,7 @@ RANDOM_CLOSING_REMARKS = get_google_sheet_data(credentials_json, spreadsheet_id,
 # HTML 형식으로 글 생성 함수
 @DeprecationWarning
 def generate_blog_content(hotel_name, location, room_type, address, map_link, cleanliness, amenities, image_paths):
+    image_paths = [os.path.join(IMAGE_FOLDER,str(row_idx), f"image{i+1}.jpg") for i in range(3)]
     html_content = f"""
     <html>
     <head>
@@ -232,23 +266,20 @@ def post_to_hashnode(title, content):
     
     return publish_response
 
-# Dropbox 공유 링크를 직접 이미지 URL로 변환
+# Dropbox 공유 링크 변환
 def convert_dropbox_link(share_link):
     return share_link.replace("www.dropbox.com", "dl.dropboxusercontent.com").replace("?dl=0", "")
-
+ 
 
 # 본문 구성
-def generate_blog_content(title, address, room_type, cleanliness, amenities):
-    dropbox_links = [
-        "https://www.dropbox.com/scl/fi/9t0ltmj40mveg669n5iy9/image2.jpg?rlkey=4h42jdgedtmyv7ktlakn3r9uh&st=7ld98uz7&dl=0",
-        "https://www.dropbox.com/scl/fi/6r4qyh8o6701s9cmhd70r/image1.jpg?rlkey=mf3w739rbqn2i3i0zwptva0bl&st=o0q79gqx&dl=0",
-        "https://www.dropbox.com/scl/fi/v8j6arq7x3j7fh93ntar9/image3.jpg?rlkey=s0s5c8b8qu7kaa86nnsb0og6h&st=pclnlenh&dl=0"
-    ]
+def generate_blog_content(title, address, room_type, cleanliness, amenities, row_idx):
+    dropbox_links = get_dropbox_links(row_idx)
     
-    converted_links = [convert_dropbox_link(link) for link in dropbox_links]
-    print("[변환된 이미지 URL 확인]", converted_links[0])  # 로그 추가
-    
-    image_markdown = "\n".join([f"![이미지]({link})" for link in converted_links])
+    if not dropbox_links:
+        print("Dropbox 이미지가 없습니다.")
+        return f"## {title}\n\n(이미지를 불러오지 못했습니다.)\n\n"
+
+    image_markdown = "\n".join([f"![이미지]({link})" for link in dropbox_links[:3]])  # 최대 3개 이미지 사용
     content = f"## {title}\n\n" + \
               image_markdown + "\n\n" + \
               "### 🏨 호텔 개요\n" + \
@@ -273,12 +304,10 @@ def main():
     # ✅ SEO 최적화된 블로그 제목 생성
     title = generate_seo_title(hotel_name, cleanliness, amenities, room_type)
     
-    # ✅ 이미지 추가
-    image_folder = IMAGE_FOLDER  # 실제 이미지 폴더 경로 지정
-    image_paths = [os.path.join(image_folder,str(row_idx), f"image{i+1}.jpg") for i in range(3)]
+ 
     
     # ✅ 본문 내용 생성
-    content = generate_blog_content(title, address, room_type, cleanliness, amenities)
+    content = generate_blog_content(title, address, room_type, cleanliness, amenities,row_idx)
     
     post_response = post_to_hashnode(title, content)
     if "errors" in post_response:
